@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>เกม AR คณิตศาสตร์ - บวกหรือลบ?</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;800&display=swap');
+
+        body {
+            font-family: 'Kanit', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            background-color: #fdf4ff; /* Light pink/purple sky */
+            touch-action: none;
+        }
+
+        /* Math Classroom Background Pattern (Pink/Purple theme for Game 2) */
+        .bg-math {
+            background-image: 
+                radial-gradient(circle at 20% 30%, rgba(217, 70, 239, 0.15) 20px, transparent 21px),
+                radial-gradient(circle at 80% 70%, rgba(168, 85, 247, 0.15) 25px, transparent 26px),
+                radial-gradient(circle at 40% 80%, rgba(236, 72, 153, 0.15) 15px, transparent 16px);
+            background-size: 150px 150px;
+        }
+
+        .floating-symbol {
+            position: absolute;
+            font-size: 5rem;
+            color: rgba(0, 0, 0, 0.04);
+            pointer-events: none;
+            z-index: 0;
+            animation: float 12s infinite linear;
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-30px) rotate(180deg); }
+            100% { transform: translateY(0) rotate(360deg); }
+        }
+
+        /* Glassmorphism Utilities */
+        .glass {
+            background: rgba(255, 255, 255, 0.55);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 8px 32px 0 rgba(192, 132, 252, 0.2);
+        }
+
+        .glass-bubble {
+            background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.95), rgba(243, 232, 255, 0.7) 60%, rgba(216, 180, 254, 0.3) 100%);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            box-shadow: inset -5px -5px 15px rgba(0,0,0,0.1), 0 10px 25px rgba(168, 85, 247, 0.3);
+            position: absolute;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .glass-bubble::before {
+            content: '';
+            position: absolute;
+            top: 10%;
+            left: 15%;
+            width: 30%;
+            height: 20%;
+            background: white;
+            border-radius: 50%;
+            transform: rotate(-45deg);
+            opacity: 0.9;
+            filter: blur(1px);
+        }
+
+        /* Video and Canvas */
+        .layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #videoElement {
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 1;
+            z-index: 1;
+        }
+
+        #canvasElement {
+            transform: scaleX(-1);
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        #uiLayer {
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .interactive {
+            pointer-events: auto;
+        }
+
+        /* Custom Cursor States */
+        #virtualCursor {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 100;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background-color 0.2s, border 0.2s, width 0.2s, height 0.2s;
+        }
+
+        .cursor-normal {
+            background-color: rgba(168, 85, 247, 0.5);
+            border: 2px solid #a855f7;
+        }
+
+        .cursor-hover {
+            background-color: rgba(234, 179, 8, 0.3);
+            border: 3px dashed #eab308;
+            width: 45px !important;
+            height: 45px !important;
+        }
+
+        .cursor-miss {
+            background-color: rgba(239, 68, 68, 0.5);
+            border: 2px solid #ef4444;
+        }
+
+        .cursor-grabbed {
+            background-color: rgba(34, 197, 94, 0.8);
+            border: 2px solid #22c55e;
+            color: white;
+        }
+
+        .drop-zone {
+            transition: all 0.3s;
+            background: rgba(255, 255, 255, 0.6);
+        }
+        .drop-zone-active {
+            transform: scale(1.05);
+            border-color: #a855f7 !important;
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.5);
+            background: rgba(168, 85, 247, 0.15);
+        }
+
+        /* Animations */
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(0); opacity: 0; }
+        }
+        .animate-pop {
+            animation: pop 0.3s ease-out forwards;
+        }
+        
+        @keyframes dropIn {
+            from { transform: translateY(-50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-drop-in {
+            animation: dropIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes pulse-red {
+            0% { color: #ef4444; transform: scale(1); }
+            50% { color: #991b1b; transform: scale(1.1); }
+            100% { color: #ef4444; transform: scale(1); }
+        }
+        .timer-warning {
+            animation: pulse-red 1s infinite;
+        }
+    </style>
+</head>
+<body class="bg-math text-slate-800">
+
+    <!-- Background Symbols -->
+    <div class="floating-symbol" style="top: 15%; left: 15%; animation-delay: 0s;">➕</div>
+    <div class="floating-symbol" style="top: 65%; left: 25%; animation-delay: 2s;">➖</div>
+    <div class="floating-symbol" style="top: 25%; left: 75%; animation-delay: 4s;">🤔</div>
+    <div class="floating-symbol" style="top: 75%; left: 80%; animation-delay: 1s;">💡</div>
+
+    <!-- Media Layers -->
+    <video id="videoElement" class="layer hidden" autoplay playsinline></video>
+    <canvas id="canvasElement" class="layer"></canvas>
+
+    <!-- Bubbles Container -->
+    <div id="bubblesContainer" class="layer"></div>
+
+    <!-- Custom Cursor -->
+    <div id="virtualCursor" class="cursor-normal hidden"></div>
+
+    <!-- UI Layer -->
+    <div id="uiLayer" class="layer flex flex-col justify-between p-3 md:p-6">
+        
+        <!-- Top Compact Section -->
+        <div class="flex flex-col gap-2 w-full max-w-4xl mx-auto pointer-events-none hidden" id="topSection">
+            <!-- Header Status Panel -->
+            <div class="flex justify-between items-center w-full">
+                <div class="glass px-4 py-1.5 rounded-2xl text-lg md:text-xl font-bold text-purple-600 animate-drop-in flex items-center gap-2">
+                    <span>ข้อที่ <span id="uiQuestionNum">1</span>/20</span>
+                </div>
+
+                <div class="glass px-4 py-1.5 rounded-2xl text-xl md:text-2xl font-extrabold text-blue-600 animate-drop-in flex items-center gap-2" id="timerBox">
+                    ⏱️ <span id="uiTimer">30</span>s
+                </div>
+
+                <div class="flex items-center gap-2 animate-drop-in">
+                    <div id="statusText" class="text-xs md:text-sm font-medium text-orange-500 bg-white/90 px-3 py-1.5 rounded-full shadow">
+                        กำลังหามือของคุณ...
+                    </div>
+                    <div class="glass px-4 py-1.5 rounded-2xl text-lg md:text-xl font-bold text-green-600">
+                        คะแนน <span id="uiScore">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compact Question Banner -->
+            <div id="gameQuestion" class="glass w-full p-4 md:p-6 rounded-2xl text-center shadow-lg animate-drop-in pointer-events-auto border-2 border-purple-200">
+                <h2 class="text-lg md:text-2xl font-bold text-slate-700 leading-normal flex items-center justify-center gap-3">
+                    <span class="text-3xl md:text-4xl">📝</span>
+                    <span id="uiQuestionText">โหลดคำถาม...</span>
+                </h2>
+                <p class="text-sm md:text-base text-purple-500 mt-2 font-semibold">ข้อนี้ใช้วิธี <span class="text-xl">➕</span> หรือ <span class="text-xl">➖</span> ?</p>
+            </div>
+        </div>
+
+        <div class="flex-1"></div>
+
+        <!-- Bottom: Drop Zone -->
+        <div class="flex justify-center pb-2 hidden" id="gameFooter">
+            <div id="dropZone" class="glass drop-zone interactive border-4 border-dashed border-purple-400 w-60 md:w-72 h-28 md:h-32 rounded-2xl flex flex-col items-center justify-center animate-drop-in">
+                <span class="text-3xl mb-1 text-purple-400">⬇️</span>
+                <span class="text-xl font-bold text-purple-600">วางเครื่องหมายที่นี่</span>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Start Screen Overlay -->
+    <div id="startScreen" class="layer interactive glass flex flex-col items-center justify-center z-50">
+        <div class="bg-white/95 p-8 md:p-10 rounded-3xl shadow-2xl text-center max-w-lg border border-purple-200 transform transition hover:scale-105 mx-4">
+            <div class="text-6xl mb-4">⏱️➕➖</div>
+            <h1 class="text-3xl md:text-4xl font-extrabold text-purple-600 mb-2">เกมที่ 2: บวก หรือ ลบ?</h1>
+            <p class="text-lg md:text-xl text-slate-600 mb-6 font-semibold">วิเคราะห์โจทย์ปัญหา ป.4</p>
+            
+            <ul class="text-left text-slate-700 mb-6 space-y-3 bg-purple-50 p-5 rounded-xl text-sm md:text-base border border-purple-100">
+                <li class="flex items-start gap-2"><span>🎯</span> <span>อ่านโจทย์แล้วเลือกว่าต้องใช้การ <b>บวก</b> หรือ <b>ลบ</b></span></li>
+                <li class="flex items-start gap-2"><span>⏱️</span> <span>มีเวลาคิดข้อละ <b>30 วินาที</b>!</span></li>
+                <li class="flex items-start gap-2"><span>🤏</span> <span>ใช้นิ้วจีบจับ (AR) หรือใช้เมาส์ลากเครื่องหมายไปวางในกล่องด้านล่าง</span></li>
+            </ul>
+
+            <button id="btnStart" class="bg-gradient-to-r from-purple-500 to-fuchsia-500 hover:from-purple-600 hover:to-fuchsia-600 text-white font-bold py-3.5 px-8 rounded-full text-xl md:text-2xl shadow-lg transform transition active:scale-95 w-full">
+                เริ่มจับเวลา!
+            </button>
+            <p class="mt-4 text-xs text-slate-500">* กรุณาอนุญาตให้เข้าถึงกล้องเพื่อเปิดระบบ AR</p>
+        </div>
+    </div>
+
+    <!-- End Screen Overlay -->
+    <div id="endScreen" class="layer interactive glass flex flex-col items-center justify-center z-50 hidden">
+        <div class="bg-white/95 p-8 md:p-10 rounded-3xl shadow-2xl text-center max-w-lg border border-purple-200 mx-4">
+            <div class="text-6xl mb-4 animate-bounce">🏆</div>
+            <h1 class="text-4xl md:text-5xl font-extrabold text-fuchsia-600 mb-4">สรุปผลการทดสอบ!</h1>
+            <p class="text-xl md:text-2xl text-slate-700 mb-2">ทักษะการวิเคราะห์โจทย์ของคุณ</p>
+            <div class="text-3xl md:text-4xl font-bold text-purple-600 my-6 bg-purple-100 py-4 px-8 rounded-full inline-block">
+                คะแนน <span id="finalScore">20</span> / 20
+            </div>
+            
+            <button id="btnRestart" class="bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600 text-white font-bold py-3.5 px-8 rounded-full text-lg md:text-xl shadow-lg transform transition active:scale-95 w-full mt-4">
+                เล่นอีกครั้ง 🔄
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Audio Synth System ---
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playCorrectSound() {
+            initAudio();
+            const now = audioCtx.currentTime;
+            const freqs = [523.25, 659.25, 783.99, 1046.50]; 
+            freqs.forEach((freq, idx) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+                gain.gain.setValueAtTime(0.12, now + idx * 0.08);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.08 + 0.15);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now + idx * 0.08);
+                osc.stop(now + idx * 0.08 + 0.15);
+            });
+        }
+
+        function playWrongSound() {
+            initAudio();
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(160, now);
+            osc.frequency.linearRampToValueAtTime(90, now + 0.35); 
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.35);
+        }
+
+        function playGrabSound() {
+            initAudio();
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(400, now);
+            osc.frequency.exponentialRampToValueAtTime(800, now + 0.08); 
+            gain.gain.setValueAtTime(0.08, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.08);
+        }
+
+        // --- 2. Game Data (Determine Operation: + or -) ---
+        const questionsData = [
+            { q: "แม่ค้าขายส้มได้ 24 ผล ขายเพิ่มอีก 18 ผล ขายส้มรวมกี่ผล", ans: "+" },
+            { q: "ห้องสมุดมีหนังสือ 96 เล่ม ยืมออกไป 38 เล่ม เหลือกี่เล่ม", ans: "-" },
+            { q: "สวนผลไม้มีมะม่วง 50 ผล เก็บไปขาย 26 ผล เหลือกี่ผล", ans: "-" },
+            { q: "ห้องเรียนมีนักเรียนชาย 58 คน นักเรียนหญิง 23 คน รวมมีนักเรียนกี่คน", ans: "+" },
+            { q: "ครูมีดินสอ 35 แท่ง แจกนักเรียนไป 17 แท่ง เหลือดินสอกี่แท่ง", ans: "-" },
+            { q: "พ่อมีเงิน 95 บาท ซื้อไอศกรีม 42 บาท พ่อเหลือเงินกี่บาท", ans: "-" },
+            { q: "ฟาร์มไก่เก็บไข่ได้ตอนเช้า 42 ฟอง ตอนเย็น 19 ฟอง รวมได้กี่ฟอง", ans: "+" },
+            { q: "แม่ซื้อเสื้อ 50 บาท ซื้อหมวกอีก 35 บาท แม่จ่ายเงินไปทั้งหมดกี่บาท", ans: "+" },
+            { q: "ร้านค้ามีลูกโป่ง 90 ลูก ขายไป 55 ลูก เหลือลูกโป่งกี่ลูก", ans: "-" },
+            { q: "ลุงปลูกต้นไม้ 80 ต้น ต้นเหี่ยวตายไป 15 ต้น เหลือต้นไม้กี่ต้น", ans: "-" },
+            { q: "ป้าขายขนมกล้วยได้ 45 บาท ขายขนมผิงได้ 18 บาท ป้าได้เงินรวมกี่บาท", ans: "+" },
+            { q: "สนามวิ่งยาว 90 เมตร วิ่งไปได้แล้ว 45 เมตร เหลือระยะทางกี่เมตร", ans: "-" },
+            { q: "สมหญิงมีเงิน 84 บาท ซื้อสมุดเขียน 25 บาท สมหญิงเหลือเงินกี่บาท", ans: "-" },
+            { q: "ร้านค้ามีสมุด 40 เล่ม สั่งมาเพิ่มอีก 25 เล่ม มีสมุดทั้งหมดกี่เล่ม", ans: "+" },
+            { q: "ชาวนามีข้าวเปลือก 80 ถุง ขายไป 34 ถุง เหลือข้าวเปลือกกี่ถุง", ans: "-" },
+            { q: "เดือนแรกออมเงิน 45 บาท เดือนที่สองออม 38 บาท รวมได้กี่บาท", ans: "+" },
+            { q: "รถประจำทางมีผู้โดยสาร 95 คน ลงสถานีแรก 38 คน เหลือผู้โดยสารกี่คน", ans: "-" },
+            { q: "พี่มีขนม 55 ชิ้น แบ่งให้น้องไป 30 ชิ้น พี่เหลือขนมกี่ชิ้น", ans: "-" },
+            { q: "ในอ่างมีปลาคาร์ฟ 45 ตัว ปลาทอง 16 ตัว มีปลาทั้งหมดกี่ตัว", ans: "+" },
+            { q: "โรงเรียนมีเก้าอี้ 90 ตัว มีคนนั่ง 55 ตัว เหลือเก้าอี้ว่างกี่ตัว", ans: "-" }
+        ];
+
+        // --- 3. Game State & Timer ---
+        let gameState = {
+            questions: [],
+            currentIndex: 0,
+            score: 0,
+            isPlaying: false,
+            bubbles: []
+        };
+
+        let timerInterval = null;
+        let timeLeft = 30;
+
+        let vCursor = {
+            x: -100, y: -100,
+            isPinching: false,
+            grabbedBubble: null
+        };
+
+        // --- 4. DOM Elements ---
+        const ui = {
+            startScreen: document.getElementById('startScreen'),
+            endScreen: document.getElementById('endScreen'),
+            btnStart: document.getElementById('btnStart'),
+            btnRestart: document.getElementById('btnRestart'),
+            topSection: document.getElementById('topSection'),
+            gameQuestion: document.getElementById('gameQuestion'),
+            gameFooter: document.getElementById('gameFooter'),
+            uiQuestionNum: document.getElementById('uiQuestionNum'),
+            uiScore: document.getElementById('uiScore'),
+            uiQuestionText: document.getElementById('uiQuestionText'),
+            statusText: document.getElementById('statusText'),
+            bubblesContainer: document.getElementById('bubblesContainer'),
+            dropZone: document.getElementById('dropZone'),
+            virtualCursor: document.getElementById('virtualCursor'),
+            video: document.getElementById('videoElement'),
+            canvas: document.getElementById('canvasElement'),
+            uiTimer: document.getElementById('uiTimer'),
+            timerBox: document.getElementById('timerBox')
+        };
+
+        const ctx = ui.canvas.getContext('2d');
+
+        // --- 5. Helper Functions ---
+        function shuffle(array) {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex != 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        }
+
+        // --- 6. Timer Logic ---
+        function startTimer() {
+            clearInterval(timerInterval);
+            timeLeft = 30;
+            updateTimerUI();
+            
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                updateTimerUI();
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    handleTimeOut();
+                }
+            }, 1000);
+        }
+
+        function updateTimerUI() {
+            ui.uiTimer.innerText = timeLeft;
+            if (timeLeft <= 5) {
+                ui.timerBox.classList.add('timer-warning');
+            } else {
+                ui.timerBox.classList.remove('timer-warning');
+            }
+        }
+
+        function handleTimeOut() {
+            playWrongSound();
+            ui.uiQuestionText.innerText = "หมดเวลา! ⏰";
+            ui.uiQuestionText.classList.add('text-red-500');
+            
+            // Drop any grabbed item
+            if (vCursor.grabbedBubble) {
+                vCursor.grabbedBubble.isGrabbed = false;
+                vCursor.grabbedBubble = null;
+            }
+
+            setTimeout(() => {
+                ui.uiQuestionText.classList.remove('text-red-500');
+                nextQuestion();
+            }, 1000);
+        }
+
+        // --- 7. Bubbles (Only + and -) ---
+        function createBubbles(correctAnswer) {
+            ui.bubblesContainer.innerHTML = '';
+            gameState.bubbles = [];
+            
+            const options = [
+                { symbol: '➕', value: '+', color: 'text-green-600' },
+                { symbol: '➖', value: '-', color: 'text-red-500' }
+            ];
+
+            options.forEach((opt) => {
+                const size = 120; // Big clear bubbles
+                const el = document.createElement('div');
+                el.className = 'glass-bubble interactive';
+                el.style.width = `${size}px`;
+                el.style.height = `${size}px`;
+                
+                el.innerHTML = `<span class="font-extrabold text-6xl drop-shadow-md ${opt.color}">${opt.symbol}</span>`;
+                ui.bubblesContainer.appendChild(el);
+
+                const x = Math.random() * (window.innerWidth - size);
+                const safeZoneHeight = window.innerHeight - 350; 
+                const y = (Math.random() * (safeZoneHeight - size)) + 180; 
+
+                const vx = (Math.random() - 0.5) * 4; // Move a bit faster
+                const vy = (Math.random() - 0.5) * 4;
+
+                const bubbleObj = {
+                    el, x, y, vx, vy, size, 
+                    isGrabbed: false, 
+                    value: opt.value, 
+                    isCorrect: (opt.value === correctAnswer),
+                    rotation: 0,
+                    rotSpeed: (Math.random() - 0.5) * 2
+                };
+
+                el.addEventListener('mousedown', (e) => handlePointerDown(e, bubbleObj));
+                el.addEventListener('touchstart', (e) => handlePointerDown(e, bubbleObj), {passive: false});
+
+                gameState.bubbles.push(bubbleObj);
+            });
+        }
+
+        function updateBubbles() {
+            if (!gameState.isPlaying) return;
+
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            let hoveringAny = false;
+
+            const topBoundary = 160;
+            const bottomBoundary = h - 130;
+
+            gameState.bubbles.forEach(b => {
+                if (b.isGrabbed) {
+                    b.x = vCursor.x - b.size / 2;
+                    b.y = vCursor.y - b.size / 2;
+                    b.el.style.transform = `translate(${b.x}px, ${b.y}px) scale(1.15)`;
+                    b.el.style.zIndex = "1000";
+                } else {
+                    b.x += b.vx;
+                    b.y += b.vy;
+                    b.rotation += b.rotSpeed;
+
+                    if (b.x <= 0) { b.x = 0; b.vx *= -1; }
+                    if (b.x + b.size >= w) { b.x = w - b.size; b.vx *= -1; }
+                    if (b.y <= topBoundary) { b.y = topBoundary; b.vy *= -1; }
+                    if (b.y + b.size >= bottomBoundary) { b.y = bottomBoundary - b.size; b.vy *= -1; }
+
+                    b.el.style.transform = `translate(${b.x}px, ${b.y}px) rotate(${b.rotation}deg)`;
+                    b.el.style.zIndex = "10";
+
+                    const centerX = b.x + b.size / 2;
+                    const centerY = b.y + b.size / 2;
+                    const dist = Math.sqrt(Math.pow(vCursor.x - centerX, 2) + Math.pow(vCursor.y - centerY, 2));
+                    if (dist < b.size / 2 + 30) hoveringAny = true;
+                }
+            });
+
+            const dzRect = ui.dropZone.getBoundingClientRect();
+            let inDropZone = false;
+            if (vCursor.grabbedBubble) {
+                if (vCursor.x > dzRect.left && vCursor.x < dzRect.right &&
+                    vCursor.y > dzRect.top && vCursor.y < dzRect.bottom) {
+                    inDropZone = true;
+                }
+            }
+
+            if (inDropZone) {
+                ui.dropZone.classList.add('drop-zone-active');
+            } else {
+                ui.dropZone.classList.remove('drop-zone-active');
+            }
+
+            updateCursorVisuals(hoveringAny);
+            requestAnimationFrame(updateBubbles);
+        }
+
+        function updateCursorVisuals(isHovering) {
+            ui.virtualCursor.style.left = `${vCursor.x}px`;
+            ui.virtualCursor.style.top = `${vCursor.y}px`;
+            ui.virtualCursor.className = ''; 
+            ui.virtualCursor.innerHTML = '';
+
+            if (vCursor.x < 0 || vCursor.y < 0) {
+                ui.virtualCursor.style.display = 'none';
+                return;
+            } else {
+                ui.virtualCursor.style.display = 'flex';
+            }
+
+            if (vCursor.grabbedBubble) {
+                ui.virtualCursor.classList.add('cursor-grabbed');
+                ui.virtualCursor.innerHTML = '✔';
+            } else if (vCursor.isPinching) {
+                ui.virtualCursor.classList.add('cursor-miss');
+            } else if (isHovering) {
+                ui.virtualCursor.classList.add('cursor-hover');
+            } else {
+                ui.virtualCursor.classList.add('cursor-normal');
+            }
+        }
+
+        // --- 8. Interaction Logic ---
+        function attemptGrab() {
+            if (vCursor.grabbedBubble) return; 
+
+            let closest = null;
+            let minDist = Infinity;
+
+            gameState.bubbles.forEach(b => {
+                const centerX = b.x + b.size / 2;
+                const centerY = b.y + b.size / 2;
+                const dist = Math.sqrt(Math.pow(vCursor.x - centerX, 2) + Math.pow(vCursor.y - centerY, 2));
+                
+                if (dist < b.size / 2 + 40 && dist < minDist) {
+                    minDist = dist;
+                    closest = b;
+                }
+            });
+
+            if (closest) {
+                vCursor.grabbedBubble = closest;
+                closest.isGrabbed = true;
+                playGrabSound();
+            }
+        }
+
+        function attemptDrop() {
+            if (!vCursor.grabbedBubble) return;
+
+            const b = vCursor.grabbedBubble;
+            b.isGrabbed = false;
+            vCursor.grabbedBubble = null;
+
+            const dzRect = ui.dropZone.getBoundingClientRect();
+            if (vCursor.x > dzRect.left && vCursor.x < dzRect.right &&
+                vCursor.y > dzRect.top && vCursor.y < dzRect.bottom) {
+                clearInterval(timerInterval); // Stop timer immediately when dropped
+                checkAnswer(b);
+            }
+        }
+
+        function checkAnswer(bubbleObj) {
+            if (bubbleObj.isCorrect) {
+                gameState.score++;
+                ui.uiScore.innerText = gameState.score;
+                playCorrectSound(); 
+
+                bubbleObj.el.classList.add('animate-pop');
+                ui.dropZone.style.backgroundColor = 'rgba(34, 197, 94, 0.4)';
+                setTimeout(() => ui.dropZone.style.backgroundColor = '', 300);
+
+                setTimeout(() => nextQuestion(), 500);
+            } else {
+                playWrongSound(); 
+
+                ui.dropZone.style.backgroundColor = 'rgba(239, 68, 68, 0.4)';
+                setTimeout(() => ui.dropZone.style.backgroundColor = '', 300);
+                
+                bubbleObj.y = window.innerHeight / 2;
+                bubbleObj.vy = -10;
+                
+                setTimeout(() => nextQuestion(), 500);
+            }
+        }
+
+        // --- 9. Pointer Support ---
+        function handlePointerDown(e, bubbleObj) {
+            e.preventDefault();
+            if(!gameState.isPlaying) return;
+            initAudio();
+            vCursor.isPinching = true;
+            vCursor.grabbedBubble = bubbleObj;
+            bubbleObj.isGrabbed = true;
+            playGrabSound();
+            updatePointerPos(e);
+        }
+
+        function handlePointerMove(e) {
+            if(!gameState.isPlaying) return;
+            updatePointerPos(e);
+        }
+
+        function handlePointerUp(e) {
+            if(!gameState.isPlaying) return;
+            if (vCursor.grabbedBubble) attemptDrop();
+            vCursor.isPinching = false;
+        }
+
+        function updatePointerPos(e) {
+            let clientX, clientY;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            if(clientX !== undefined) {
+                vCursor.x = clientX;
+                vCursor.y = clientY;
+            }
+        }
+
+        document.addEventListener('mousemove', handlePointerMove);
+        document.addEventListener('touchmove', handlePointerMove, {passive: false});
+        document.addEventListener('mouseup', handlePointerUp);
+        document.addEventListener('touchend', handlePointerUp);
+
+        // --- 10. MediaPipe AR ---
+        let handsReady = false;
+        
+        function onResults(results) {
+            handsReady = true;
+            ui.statusText.innerText = "ตรวจพบมือแล้ว 🖐️";
+            ui.statusText.className = "text-xs md:text-sm font-medium text-purple-700 bg-purple-100 px-3 py-1.5 rounded-full shadow border border-purple-300";
+
+            ui.canvas.width = window.innerWidth;
+            ui.canvas.height = window.innerHeight;
+            ctx.clearRect(0, 0, ui.canvas.width, ui.canvas.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0]; 
+                
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#ffffff', lineWidth: 4});
+                drawLandmarks(ctx, landmarks, {color: '#a855f7', lineWidth: 2, radius: 4});
+
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+
+                const screenX = (1 - indexTip.x) * window.innerWidth; 
+                const screenY = indexTip.y * window.innerHeight;
+
+                vCursor.x = screenX;
+                vCursor.y = screenY;
+
+                const ratio = window.innerWidth / window.innerHeight;
+                const dx = (thumbTip.x - indexTip.x) * ratio; 
+                const dy = thumbTip.y - indexTip.y;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+
+                const pinchThreshold = 0.055; 
+
+                if (distance < pinchThreshold) {
+                    if (!vCursor.isPinching) {
+                        vCursor.isPinching = true;
+                        attemptGrab();
+                    }
+                } else {
+                    if (vCursor.isPinching) {
+                        vCursor.isPinching = false;
+                        attemptDrop();
+                    }
+                }
+            } else {
+                vCursor.x = -100;
+                vCursor.y = -100;
+                if (vCursor.isPinching) {
+                    vCursor.isPinching = false;
+                    attemptDrop();
+                }
+                ui.statusText.innerText = "กำลังหามือของคุณ...";
+                ui.statusText.className = "text-xs md:text-sm font-medium text-orange-500 bg-white/90 px-3 py-1.5 rounded-full shadow";
+            }
+        }
+
+        async function initCamera() {
+            ui.video.classList.remove('hidden');
+            
+            const hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+            
+            hands.onResults(onResults);
+
+            const camera = new Camera(ui.video, {
+                onFrame: async () => {
+                    await hands.send({image: ui.video});
+                },
+                width: 640,
+                height: 480
+            });
+            
+            try {
+                await camera.start();
+            } catch (e) {
+                console.error("Camera access failed:", e);
+                ui.statusText.innerText = "ใช้เมาส์/ทัชสกรีนเล่นได้เลย";
+                ui.video.style.display = 'none';
+            }
+        }
+
+        // --- 11. Game Flow ---
+        function startGame() {
+            initAudio(); 
+            ui.startScreen.classList.add('hidden');
+            ui.endScreen.classList.add('hidden');
+            
+            ui.topSection.classList.remove('hidden');
+            ui.gameFooter.classList.remove('hidden');
+
+            gameState.questions = shuffle([...questionsData]).slice(0, 20); 
+            gameState.currentIndex = 0;
+            gameState.score = 0;
+            gameState.isPlaying = true;
+            
+            ui.uiScore.innerText = gameState.score;
+            
+            if(!handsReady) {
+                initCamera();
+            }
+
+            loadQuestion();
+            requestAnimationFrame(updateBubbles);
+        }
+
+        function loadQuestion() {
+            const q = gameState.questions[gameState.currentIndex];
+            ui.uiQuestionNum.innerText = gameState.currentIndex + 1;
+            
+            ui.uiQuestionText.style.opacity = 0;
+            setTimeout(() => {
+                ui.uiQuestionText.innerText = q.q;
+                ui.uiQuestionText.style.opacity = 1;
+                ui.uiQuestionText.style.transition = "opacity 0.4s";
+            }, 150);
+
+            createBubbles(q.ans);
+            startTimer(); // Start 30s timer
+        }
+
+        function nextQuestion() {
+            gameState.currentIndex++;
+            if (gameState.currentIndex >= gameState.questions.length) {
+                endGame();
+            } else {
+                loadQuestion();
+            }
+        }
+
+        function endGame() {
+            gameState.isPlaying = false;
+            clearInterval(timerInterval);
+            ui.bubblesContainer.innerHTML = '';
+            
+            ui.topSection.classList.add('hidden');
+            ui.gameFooter.classList.add('hidden');
+            
+            ui.endScreen.classList.remove('hidden');
+            document.getElementById('finalScore').innerText = gameState.score;
+        }
+
+        // --- 12. Listeners ---
+        ui.btnStart.addEventListener('click', startGame);
+        ui.btnRestart.addEventListener('click', startGame);
+
+        window.addEventListener('resize', () => {
+            ui.canvas.width = window.innerWidth;
+            ui.canvas.height = window.innerHeight;
+        });
+
+    </script>
+</body>
+</html>
